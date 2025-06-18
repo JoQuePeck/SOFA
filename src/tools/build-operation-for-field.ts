@@ -96,17 +96,13 @@ export function buildOperationNodeForField({
   });
 
   // attach variables
-  (operationNode as any).variableDefinitions = [...operationVariables];
+  (operationNode as any).variableDefinitions = operationVariables;
 
   resetOperationVariables();
   resetFieldMap();
 
   return operationNode;
 }
-
-// function saveShareSelectionNode() {
-
-// }
 
 function buildOperationAndCollectVariables({
   schema,
@@ -243,7 +239,7 @@ function resolveSelectionSet({
         
         // 只有当 selectionSet 有内容时才创建节点
         if (selectionSet?.selections?.length > 0) {
-          selections.push({
+          selections.push(getCachedNode({
             kind: Kind.INLINE_FRAGMENT,
             typeCondition: {
               kind: Kind.NAMED_TYPE,
@@ -253,15 +249,15 @@ function resolveSelectionSet({
               },
             },
             selectionSet,
-          });
+          }) as InlineFragmentNode);
         }
       }
     }
 
-    return selections.length > 0 ? {
+    return selections.length > 0 ? getCachedNode({
       kind: Kind.SELECTION_SET,
       selections,
-    } : undefined;
+    }) as SelectionSetNode : undefined;
   }
 
   if (isInterfaceType(type)) {
@@ -296,7 +292,7 @@ function resolveSelectionSet({
           }) as SelectionSetNode;
           
           if (selectionSet?.selections?.length > 0) {
-            selections.push({
+            selections.push(getCachedNode({
               kind: Kind.INLINE_FRAGMENT,
               typeCondition: {
                 kind: Kind.NAMED_TYPE,
@@ -306,16 +302,16 @@ function resolveSelectionSet({
                 },
               },
               selectionSet,
-            });
+            }) as InlineFragmentNode);
           }
         }
       }
     }
 
-    return selections.length > 0 ? {
+    return selections.length > 0 ? getCachedNode({
       kind: Kind.SELECTION_SET,
       selections,
-    } : undefined;
+    }) as SelectionSetNode : undefined;
   }
 
   if (isObjectType(type) && !rootTypeNames.has(type.name)) {
@@ -390,7 +386,7 @@ function resolveSelectionSet({
 }
 
 // 静态常量，避免重复创建相同的对象
-const STATIC_ID_SELECTION_SET: SelectionSetNode = {
+const STATIC_ID_SELECTION_SET = getCachedNode({
   kind: Kind.SELECTION_SET,
   selections: [
     {
@@ -401,7 +397,7 @@ const STATIC_ID_SELECTION_SET: SelectionSetNode = {
       },
     },
   ],
-};
+}) as SelectionSetNode;
 
 function resolveVariable(arg: GraphQLArgument, name?: string): VariableDefinitionNode {
   function resolveVariableType(type: GraphQLList<any>): ListTypeNode;
@@ -505,7 +501,7 @@ function resolveField({
         addOperationVariable(resolveVariable(arg, argumentName));
       }
       
-      args[validArgsCount++] = {
+      args[validArgsCount++] = getCachedNode({
         kind: Kind.ARGUMENT,
         name: {
           kind: Kind.NAME,
@@ -518,7 +514,7 @@ function resolveField({
             value: argumentName, // 复用已计算的值
           },
         },
-      };
+      }) as ArgumentNode;
     }
 
     // 只保留有效的参数，避免稀疏数组
