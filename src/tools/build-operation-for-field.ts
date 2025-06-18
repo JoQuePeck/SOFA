@@ -1,5 +1,6 @@
 import {
   ArgumentNode,
+  FieldNode,
   getNamedType,
   GraphQLArgument,
   GraphQLField,
@@ -28,6 +29,7 @@ import {
   VariableDefinitionNode,
 } from 'graphql';
 import { getDefinedRootType, getRootTypeNames } from './rootTypes.js';
+import { getCachedNode } from './duplicate.js';
 
 let operationVariables: VariableDefinitionNode[] = [];
 let fieldTypeMap = new Map();
@@ -208,20 +210,40 @@ function resolveSelectionSet({
   if (typeof selectedFields === 'boolean' && depth > depthLimit) {
     return;
   }
+
   if (isUnionType(type)) {
     const types = type.getTypes();
-
-    return {
-      kind: Kind.SELECTION_SET,
-      selections: types
-        .filter(
-          t =>
-            !hasCircularRef([...ancestors, t], {
-              depth: circularReferenceDepth,
-            }),
-        )
-        .map<InlineFragmentNode>(t => {
-          return {
+    const selections: InlineFragmentNode[] = [];
+    
+    // 避免创建中间数组，直接构建结果
+    for (const t of types) {
+      // 复用 ancestors 数组，避免展开
+      ancestors.push(t);
+      const hasCircular = hasCircularRef(ancestors, {
+        depth: circularReferenceDepth,
+      });
+      ancestors.pop(); // 恢复原状态
+      
+      if (!hasCircular) {
+        const selectionSet = resolveSelectionSet({
+          parent: type,
+          type: t,
+          models,
+          path,
+          ancestors,
+          ignore,
+          depthLimit,
+          circularReferenceDepth,
+          schema,
+          depth,
+          argNames,
+          selectedFields,
+          rootTypeNames,
+        }) as SelectionSetNode;
+        
+        // 只有当 selectionSet 有内容时才创建节点
+        if (selectionSet?.selections?.length > 0) {
+          selections.push({
             kind: Kind.INLINE_FRAGMENT,
             typeCondition: {
               kind: Kind.NAMED_TYPE,
@@ -230,70 +252,70 @@ function resolveSelectionSet({
                 value: t.name,
               },
             },
-            selectionSet: resolveSelectionSet({
-              parent: type,
-              type: t,
-              models,
-              path,
-              ancestors,
-              ignore,
-              depthLimit,
-              circularReferenceDepth,
-              schema,
-              depth,
-              argNames,
-              selectedFields,
-              rootTypeNames,
-            }) as SelectionSetNode,
-          };
-        })
-        .filter(fragmentNode => fragmentNode?.selectionSet?.selections?.length > 0),
-    };
+            selectionSet,
+          });
+        }
+      }
+    }
+
+    return selections.length > 0 ? {
+      kind: Kind.SELECTION_SET,
+      selections,
+    } : undefined;
   }
 
   if (isInterfaceType(type)) {
-    const types = Object.values(schema.getTypeMap()).filter(
-      (t: any) => isObjectType(t) && t.getInterfaces().includes(type),
-    ) as GraphQLObjectType[];
-
-    return {
-      kind: Kind.SELECTION_SET,
-      selections: types
-        .filter(
-          t =>
-            !hasCircularRef([...ancestors, t], {
-              depth: circularReferenceDepth,
-            }),
-        )
-        .map<InlineFragmentNode>(t => {
-          return {
-            kind: Kind.INLINE_FRAGMENT,
-            typeCondition: {
-              kind: Kind.NAMED_TYPE,
-              name: {
-                kind: Kind.NAME,
-                value: t.name,
+    // 缓存类型映射查找结果，避免重复计算
+    const typeMapValues = Object.values(schema.getTypeMap());
+    const selections: InlineFragmentNode[] = [];
+    
+    for (const t of typeMapValues) {
+      if (isObjectType(t) && t.getInterfaces().includes(type)) {
+        // 复用 ancestors 数组
+        ancestors.push(t as GraphQLObjectType);
+        const hasCircular = hasCircularRef(ancestors, {
+          depth: circularReferenceDepth,
+        });
+        ancestors.pop();
+        
+        if (!hasCircular) {
+          const selectionSet = resolveSelectionSet({
+            parent: type,
+            type: t as GraphQLObjectType,
+            models,
+            path,
+            ancestors,
+            ignore,
+            depthLimit,
+            circularReferenceDepth,
+            schema,
+            depth,
+            argNames,
+            selectedFields,
+            rootTypeNames,
+          }) as SelectionSetNode;
+          
+          if (selectionSet?.selections?.length > 0) {
+            selections.push({
+              kind: Kind.INLINE_FRAGMENT,
+              typeCondition: {
+                kind: Kind.NAMED_TYPE,
+                name: {
+                  kind: Kind.NAME,
+                  value: t.name,
+                },
               },
-            },
-            selectionSet: resolveSelectionSet({
-              parent: type,
-              type: t,
-              models,
-              path,
-              ancestors,
-              ignore,
-              depthLimit,
-              circularReferenceDepth,
-              schema,
-              depth,
-              argNames,
-              selectedFields,
-              rootTypeNames,
-            }) as SelectionSetNode,
-          };
-        })
-        .filter(fragmentNode => fragmentNode?.selectionSet?.selections?.length > 0),
-    };
+              selectionSet,
+            });
+          }
+        }
+      }
+    }
+
+    return selections.length > 0 ? {
+      kind: Kind.SELECTION_SET,
+      selections,
+    } : undefined;
   }
 
   if (isObjectType(type) && !rootTypeNames.has(type.name)) {
@@ -302,63 +324,84 @@ function resolveSelectionSet({
     const isModel = models.includes(type.name);
 
     if (!firstCall && isModel && !isIgnored) {
-      return {
-        kind: Kind.SELECTION_SET,
-        selections: [
-          {
-            kind: Kind.FIELD,
-            name: {
-              kind: Kind.NAME,
-              value: 'id',
-            },
-          },
-        ],
-      };
+      // 复用静态对象，避免重复创建
+      return STATIC_ID_SELECTION_SET;
     }
 
     const fields = type.getFields();
+    const fieldNames = Object.keys(fields);
+    const selections: SelectionNode[] = [];
 
-    return {
-      kind: Kind.SELECTION_SET,
-      selections: Object.keys(fields)
-        .filter(fieldName => {
-          return !hasCircularRef([...ancestors, getNamedType(fields[fieldName].type)], {
-            depth: circularReferenceDepth,
+    // 直接遍历，避免创建中间数组
+    for (const fieldName of fieldNames) {
+      const field = fields[fieldName];
+      const namedType = getNamedType(field.type);
+      
+      // 复用 ancestors 数组
+      ancestors.push(namedType);
+      const hasCircular = hasCircularRef(ancestors, {
+        depth: circularReferenceDepth,
+      });
+      ancestors.pop();
+      
+      if (!hasCircular) {
+        const selectedSubFields =
+          typeof selectedFields === 'object' ? selectedFields[fieldName] : true;
+        
+        if (selectedSubFields) {
+          // 复用 path 数组
+          path.push(fieldName);
+          const fieldSelection = resolveField({
+            type,
+            field,
+            models,
+            path,
+            ancestors,
+            ignore,
+            depthLimit,
+            circularReferenceDepth,
+            schema,
+            depth,
+            argNames,
+            selectedFields: selectedSubFields,
+            rootTypeNames,
           });
-        })
-        .map(fieldName => {
-          const selectedSubFields =
-            typeof selectedFields === 'object' ? selectedFields[fieldName] : true;
-          if (selectedSubFields) {
-            return resolveField({
-              type,
-              field: fields[fieldName],
-              models,
-              path: [...path, fieldName],
-              ancestors,
-              ignore,
-              depthLimit,
-              circularReferenceDepth,
-              schema,
-              depth,
-              argNames,
-              selectedFields: selectedSubFields,
-              rootTypeNames,
-            });
+          path.pop(); // 恢复原状态
+          
+          // 验证选择是否有效
+          if (fieldSelection != null) {
+            if ('selectionSet' in fieldSelection) {
+              if (fieldSelection.selectionSet?.selections?.length || 0 > 0) {
+                selections.push(fieldSelection);
+              }
+            } else {
+              selections.push(fieldSelection);
+            }
           }
-          return null;
-        })
-        .filter((f): f is SelectionNode => {
-          if (f == null) {
-            return false;
-          } else if ('selectionSet' in f) {
-            return !!f.selectionSet?.selections?.length;
-          }
-          return true;
-        }),
-    };
+        }
+      }
+    }
+
+    return selections.length > 0 ? getCachedNode({
+      kind: Kind.SELECTION_SET,
+      selections,
+    }) as SelectionSetNode : undefined;
   }
 }
+
+// 静态常量，避免重复创建相同的对象
+const STATIC_ID_SELECTION_SET: SelectionSetNode = {
+  kind: Kind.SELECTION_SET,
+  selections: [
+    {
+      kind: Kind.FIELD,
+      name: {
+        kind: Kind.NAME,
+        value: 'id',
+      },
+    },
+  ],
+};
 
 function resolveVariable(arg: GraphQLArgument, name?: string): VariableDefinitionNode {
   function resolveVariableType(type: GraphQLList<any>): ListTypeNode;
@@ -389,7 +432,7 @@ function resolveVariable(arg: GraphQLArgument, name?: string): VariableDefinitio
     };
   }
 
-  return {
+  return getCachedNode({
     kind: Kind.VARIABLE_DEFINITION,
     variable: {
       kind: Kind.VARIABLE,
@@ -399,7 +442,7 @@ function resolveVariable(arg: GraphQLArgument, name?: string): VariableDefinitio
       },
     },
     type: resolveVariableType(arg.type),
-  };
+  }) as VariableDefinitionNode;
 }
 
 function getArgumentName(name: string, path: string[]): string {
@@ -440,93 +483,123 @@ function resolveField({
   const namedType = getNamedType(field.type);
   let args: ArgumentNode[] = [];
   let removeField = false;
-
   if (field.args && field.args.length) {
-    args = field.args
-      .map<ArgumentNode>(arg => {
-        const argumentName = getArgumentName(arg.name, path);
-        if (argNames && !argNames.includes(argumentName)) {
-          if (isNonNullType(arg.type)) {
-            removeField = true;
-          }
-          return null as any;
+    // 预分配数组容量，避免动态扩容
+    args = new Array<ArgumentNode>(field.args.length);
+    let validArgsCount = 0;
+    
+    // 直接遍历，避免 map().filter() 创建中间数组
+    for (let i = 0; i < field.args.length; i++) {
+      const arg = field.args[i];
+      const argumentName = getArgumentName(arg.name, path);
+      
+      if (argNames && !argNames.includes(argumentName)) {
+        if (isNonNullType(arg.type)) {
+          removeField = true;
+          break; // 提前退出，避免继续处理
         }
-        if (!firstCall) {
-          addOperationVariable(resolveVariable(arg, argumentName));
-        }
-
-        return {
-          kind: Kind.ARGUMENT,
+        continue; // 跳过当前参数
+      }
+      
+      if (!firstCall) {
+        addOperationVariable(resolveVariable(arg, argumentName));
+      }
+      
+      args[validArgsCount++] = {
+        kind: Kind.ARGUMENT,
+        name: {
+          kind: Kind.NAME,
+          value: arg.name,
+        },
+        value: {
+          kind: Kind.VARIABLE,
           name: {
             kind: Kind.NAME,
-            value: arg.name,
+            value: argumentName, // 复用已计算的值
           },
-          value: {
-            kind: Kind.VARIABLE,
-            name: {
-              kind: Kind.NAME,
-              value: getArgumentName(arg.name, path),
-            },
-          },
-        };
-      })
-      .filter(Boolean);
+        },
+      };
+    }
+
+    // 只保留有效的参数，避免稀疏数组
+    if (validArgsCount < args.length) {
+      args.length = validArgsCount;
+    }
   }
 
   if (removeField) {
     return null as any;
   }
 
-  const fieldPath = [...path, field.name];
-  const fieldPathStr = fieldPath.join('.');
+  // 复用 path 数组，避免创建新数组
+  path.push(field.name);
+  const fieldPathStr = path.join('.');
+  path.pop(); // 恢复原状态
+
   let fieldName = field.name;
-  if (fieldTypeMap.has(fieldPathStr) && fieldTypeMap.get(fieldPathStr) !== field.type.toString()) {
-    fieldName += (field.type as any)
-      .toString()
+  const existingFieldType = fieldTypeMap.get(fieldPathStr);
+  const currentFieldTypeStr = field.type.toString();
+  
+  if (existingFieldType && existingFieldType !== currentFieldTypeStr) {
+    // 缓存类型字符串转换结果，避免重复计算
+    fieldName += currentFieldTypeStr
       .replace(/!/g, 'NonNull')
       .replace(/\[/g, 'List')
       .replace(/\]/g, '');
   }
-  fieldTypeMap.set(fieldPathStr, field.type.toString());
-
-  if (!isScalarType(namedType) && !isEnumType(namedType)) {
-    return {
-      kind: Kind.FIELD,
-      name: {
-        kind: Kind.NAME,
-        value: field.name,
-      },
-      ...(fieldName !== field.name && { alias: { kind: Kind.NAME, value: fieldName } }),
-      selectionSet:
-        resolveSelectionSet({
-          parent: type,
-          type: namedType,
-          models,
-          firstCall,
-          path: fieldPath,
-          ancestors: [...ancestors, type],
-          ignore,
-          depthLimit,
-          circularReferenceDepth,
-          schema,
-          depth: depth + 1,
-          argNames,
-          selectedFields,
-          rootTypeNames,
-        }) || undefined,
-      arguments: args,
-    };
-  }
-
-  return {
+  fieldTypeMap.set(fieldPathStr, currentFieldTypeStr);
+  
+  // 预计算基础字段对象，避免重复创建
+  const baseField: FieldNode = {
     kind: Kind.FIELD,
     name: {
       kind: Kind.NAME,
       value: field.name,
     },
-    ...(fieldName !== field.name && { alias: { kind: Kind.NAME, value: fieldName } }),
     arguments: args,
   };
+  
+  // 只有在需要时才添加 alias
+  if (fieldName !== field.name) {
+    (baseField as any).alias = {
+      kind: Kind.NAME,
+      value: fieldName,
+    };
+  }
+  
+  if (!isScalarType(namedType) && !isEnumType(namedType)) {
+    // 复用 path 和 ancestors 数组，避免展开操作
+    path.push(field.name);
+    ancestors.push(type);
+    
+    const selectionSet = resolveSelectionSet({
+      parent: type,
+      type: namedType,
+      models,
+      firstCall,
+      path,
+      ancestors,
+      ignore,
+      depthLimit,
+      circularReferenceDepth,
+      schema,
+      depth: depth + 1,
+      argNames,
+      selectedFields,
+      rootTypeNames,
+    });
+    
+    // 恢复数组状态
+    path.pop();
+    ancestors.pop();
+    
+    // 只有在有选择集时才设置
+    if (selectionSet) {
+      (baseField as any).selectionSet = selectionSet;
+    }
+  }
+  
+  return getCachedNode(baseField) as SelectionNode;
 }
 
 function hasCircularRef(
