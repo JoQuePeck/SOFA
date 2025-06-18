@@ -44,6 +44,7 @@ import {
 } from './open-api/operations.js';
 import { buildSchemaObjectFromType } from './open-api/types.js';
 import { parse as qsParse } from 'qs';
+import { cleanCacheNode } from './tools/duplicate.js';
 
 export type ErrorHandler = (errors: ReadonlyArray<any>) => Response;
 
@@ -151,6 +152,8 @@ export function createSofaRouter(sofa: Sofa) {
       createMutationRoute({ sofa, router, fieldName });
     });
   }
+
+  cleanCacheNode();
 
   router.route({
     path: '/webhook',
