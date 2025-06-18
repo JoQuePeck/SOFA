@@ -96,7 +96,7 @@ export function buildOperationNodeForField({
   });
 
   // attach variables
-  (operationNode as any).variableDefinitions = [...operationVariables];
+  (operationNode as any).variableDefinitions = operationVariables;
 
   resetOperationVariables();
   resetFieldMap();
@@ -217,7 +217,6 @@ function resolveSelectionSet({
         depth: circularReferenceDepth,
       });
       ancestors.pop();
-
       if (!hasCircular) {
         const selectionSet = resolveSelectionSet({
           parent: type,
@@ -236,7 +235,7 @@ function resolveSelectionSet({
         }) as SelectionSetNode;
 
         if (selectionSet?.selections?.length > 0) {
-          selections.push({
+          selections.push(getCachedNode({
             kind: Kind.INLINE_FRAGMENT,
             typeCondition: {
               kind: Kind.NAMED_TYPE,
@@ -246,15 +245,15 @@ function resolveSelectionSet({
               },
             },
             selectionSet,
-          });
+          }) as InlineFragmentNode);
         }
       }
     }
 
-    return selections.length > 0 ? {
+    return selections.length > 0 ? getCachedNode({
       kind: Kind.SELECTION_SET,
       selections,
-    } : undefined;
+    }) as SelectionSetNode : undefined;
   }
 
   if (isInterfaceType(type)) {
@@ -263,7 +262,6 @@ function resolveSelectionSet({
 
     for (const t of typeMapValues) {
       if (isObjectType(t) && t.getInterfaces().includes(type)) {
-
         ancestors.push(t as GraphQLObjectType);
         const hasCircular = hasCircularRef(ancestors, {
           depth: circularReferenceDepth,
@@ -288,7 +286,7 @@ function resolveSelectionSet({
           }) as SelectionSetNode;
 
           if (selectionSet?.selections?.length > 0) {
-            selections.push({
+            selections.push(getCachedNode({
               kind: Kind.INLINE_FRAGMENT,
               typeCondition: {
                 kind: Kind.NAMED_TYPE,
@@ -298,16 +296,16 @@ function resolveSelectionSet({
                 },
               },
               selectionSet,
-            });
+            }) as InlineFragmentNode);
           }
         }
       }
     }
 
-    return selections.length > 0 ? {
+    return selections.length > 0 ? getCachedNode({
       kind: Kind.SELECTION_SET,
       selections,
-    } : undefined;
+    }) as SelectionSetNode : undefined;
   }
 
   if (isObjectType(type) && !rootTypeNames.has(type.name)) {
@@ -375,7 +373,7 @@ function resolveSelectionSet({
   }
 }
 
-const STATIC_ID_SELECTION_SET: SelectionSetNode = {
+const STATIC_ID_SELECTION_SET = getCachedNode({
   kind: Kind.SELECTION_SET,
   selections: [
     {
@@ -386,7 +384,7 @@ const STATIC_ID_SELECTION_SET: SelectionSetNode = {
       },
     },
   ],
-};
+}) as SelectionSetNode;
 
 function resolveVariable(arg: GraphQLArgument, name?: string): VariableDefinitionNode {
   function resolveVariableType(type: GraphQLList<any>): ListTypeNode;
@@ -475,7 +473,6 @@ function resolveField({
     for (let i = 0; i < field.args.length; i++) {
       const arg = field.args[i];
       const argumentName = getArgumentName(arg.name, path);
-
       if (argNames && !argNames.includes(argumentName)) {
         if (isNonNullType(arg.type)) {
           removeField = true;
@@ -488,7 +485,7 @@ function resolveField({
         addOperationVariable(resolveVariable(arg, argumentName));
       }
 
-      args[validArgsCount++] = {
+      args[validArgsCount++] = getCachedNode({
         kind: Kind.ARGUMENT,
         name: {
           kind: Kind.NAME,
@@ -501,7 +498,7 @@ function resolveField({
             value: argumentName,
           },
         },
-      };
+      }) as ArgumentNode;
     }
 
     if (validArgsCount < args.length) {
@@ -568,7 +565,6 @@ function resolveField({
 
     path.pop();
     ancestors.pop();
-
     if (selectionSet) {
       (baseField as any).selectionSet = selectionSet;
     }
