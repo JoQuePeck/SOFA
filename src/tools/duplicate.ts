@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { ArgumentNode, ASTNode, ObjectFieldNode, ValueNode } from 'graphql';
+import { ArgumentNode, ASTNode, Kind, ObjectFieldNode, TypeNode, ValueNode, VariableDefinitionNode } from 'graphql';
 
 function normalizeNode(node: ASTNode): string {
   return buildStructuralSignature(node);
@@ -14,18 +14,18 @@ const MAX_DEPTH = 3
 function buildStructuralSignature(node: HashNode, depth = 0): string {
   if (depth > MAX_DEPTH) {
     if (node.hash) {
-      return `cached{${node.hash}}`;
+      return node.hash;
     }
     const tempHash = calculateNodeHash(node);
     node.hash = tempHash;
-    return `cached{${tempHash}}`;
+    return node.hash;
   }
 
   const parts: string[] = [node.kind];
   const nextDepth = depth + 1;
-  
+
   switch (node.kind) {
-    case 'Field':
+    case Kind.FIELD:
       parts.push('F');
       if (node.name) parts.push(node.name.value);
 
@@ -62,8 +62,8 @@ function buildStructuralSignature(node: HashNode, depth = 0): string {
         });
       }
       break;
-      
-    case 'FragmentSpread':
+
+    case Kind.FRAGMENT_SPREAD:
       parts.push('FS', node.name.value);
       if (node.directives?.length) {
         parts.push('D');
@@ -78,8 +78,7 @@ function buildStructuralSignature(node: HashNode, depth = 0): string {
         });
       }
       break;
-
-    case 'InlineFragment':
+    case Kind.INLINE_FRAGMENT:
       parts.push('IF');
       if (node.typeCondition) {
         parts.push('T', node.typeCondition.name.value);
@@ -101,15 +100,13 @@ function buildStructuralSignature(node: HashNode, depth = 0): string {
       });
       break;
 
-    case 'OperationDefinition':
+    case Kind.OPERATION_DEFINITION:
       parts.push('O', node.operation);
       if (node.name) parts.push(node.name.value);
-      
 
       if (node.variableDefinitions?.length) {
         parts.push('V');
-
-        const sortedVars = [...node.variableDefinitions].sort((a, b) =>
+        const sortedVars = (node.variableDefinitions as VariableDefinitionNode[]).sort((a, b) =>
           a.variable.name.value.localeCompare(b.variable.name.value)
         );
         sortedVars.forEach(varDef => {
@@ -139,7 +136,7 @@ function buildStructuralSignature(node: HashNode, depth = 0): string {
       });
       break;
 
-    case 'Document':
+    case Kind.DOCUMENT:
       parts.push('D');
       if (node.definitions) {
         node.definitions.forEach(def => {
@@ -148,7 +145,7 @@ function buildStructuralSignature(node: HashNode, depth = 0): string {
       }
       break;
 
-    case 'FragmentDefinition':
+    case Kind.FRAGMENT_DEFINITION:
       parts.push('FD', node.name.value);
       parts.push('ON', node.typeCondition.name.value);
       if (node.directives?.length) {
@@ -168,8 +165,16 @@ function buildStructuralSignature(node: HashNode, depth = 0): string {
       });
       break;
 
+    case Kind.SELECTION_SET:
+      parts.push('SS');
+      node.selections.forEach(sel => 
+        parts.push(buildStructuralSignature(sel, nextDepth))
+      )
+
+    case Kind.NAME:
+      parts.push(JSON.stringify(node))
     default:
-      parts.push(JSON.stringify(simplifyUnknownNode(node, nextDepth)));
+      parts.push(JSON.stringify(simplifyUnknownNode(node, depth)));
   }
   return parts.join('|');
 }
@@ -215,24 +220,24 @@ function getValueSignature(value: ValueNode): string {
   if (!value) return 'NULL';
 
   switch (value.kind) {
-    case 'StringValue':
+    case Kind.STRING:
       return `S:${value.value}`;
-    case 'IntValue':
+    case Kind.INT:
       return `I:${value.value}`;
-    case 'FloatValue':
+    case Kind.FLOAT:
       return `F:${value.value}`;
-    case 'BooleanValue':
+    case Kind.BOOLEAN:
       return `B:${value.value}`;
-    case 'EnumValue':
+    case Kind.ENUM:
       return `E:${value.value}`;
-    case 'NullValue':
+    case Kind.NULL:
       return 'NULL';
-    case 'Variable':
+    case Kind.VARIABLE:
       return `V:${value.name.value}`;
-    case 'ListValue':
+    case Kind.LIST:
       const listValues = value.values.map(getValueSignature).join(',');
       return `L:[${listValues}]`;
-    case 'ObjectValue':
+    case Kind.OBJECT:
       const sortedFields = (value.fields as ObjectFieldNode[]).sort((a, b) =>
         a.name.value.localeCompare(b.name.value)
       );
@@ -241,33 +246,34 @@ function getValueSignature(value: ValueNode): string {
       ).join(',');
       return `O:{${fields}}`;
     default:
-      return value.kind || 'UNKNOWN';
+      return 'UNKNOWN';
   }
 }
 
-function getTypeSignature(type: any): string {
+function getTypeSignature(type: TypeNode): string {
   if (!type) return '';
 
   switch (type.kind) {
-    case 'NamedType':
+    case Kind.NAMED_TYPE:
       return type.name.value;
-    case 'ListType':
+    case Kind.LIST_TYPE:
       return `[${getTypeSignature(type.type)}]`;
-    case 'NonNullType':
+    case Kind.NON_NULL_TYPE:
       return `${getTypeSignature(type.type)}!`;
     default:
-      return type.kind || '';
+      return 'UNKNOWN';
   }
 }
+
 
 function simplifyUnknownNode(node: HashNode, depth = 0): any {
   if (depth > MAX_DEPTH) {
     if (node.hash) {
-      return `cached{${node.hash}}`;
+      return node.hash;
     }
     const tempHash = calculateNodeHash(node);
     node.hash = tempHash;
-    return `cached{${tempHash}}`;
+    return node.hash;
   }
 
   if (!node || typeof node !== 'object') return node;
@@ -296,7 +302,10 @@ function simplifyUnknownNode(node: HashNode, depth = 0): any {
 
 function getNodeHash(node: HashNode): string {
   const content = normalizeNode(node);
-  return createHash('sha256').update(content).digest('hex');
+  if (content.length < 32) return content
+  const hash = createHash('sha256').update(content).digest('hex')
+  if (content.length < 64) return hash.substring(0, 12)
+  return hash;
 }
 
 const nodeCache = new Map<string, ASTNode>();
@@ -317,25 +326,12 @@ export function getCachedNode(node: HashNode): ASTNode {
 }
 
 export function cleanCacheNode() {
+  nodeCache.forEach(node => clearNodeHashes(node));
   nodeCache.clear();
 }
 
 export function clearNodeHashes(node: HashNode): void {
   if (node.hash) {
     delete node.hash;
-  }
-
-  for (const value of Object.values(node)) {
-    if (value && typeof value === 'object') {
-      if (Array.isArray(value)) {
-        value.forEach(item => {
-          if (item && typeof item === 'object' && 'kind' in item) {
-            clearNodeHashes(item as HashNode);
-          }
-        });
-      } else if ('kind' in value) {
-        clearNodeHashes(value as HashNode);
-      }
-    }
   }
 }

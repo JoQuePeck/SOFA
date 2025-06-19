@@ -20,13 +20,17 @@ import {
   isUnionType,
   Kind,
   ListTypeNode,
+  NamedTypeNode,
+  NameNode,
   NonNullTypeNode,
   OperationDefinitionNode,
   OperationTypeNode,
   SelectionNode,
   SelectionSetNode,
   TypeNode,
+  ValueNode,
   VariableDefinitionNode,
+  VariableNode,
 } from 'graphql';
 import { getDefinedRootType, getRootTypeNames } from './rootTypes.js';
 import { getCachedNode } from './duplicate.js';
@@ -237,13 +241,13 @@ function resolveSelectionSet({
         if (selectionSet?.selections?.length > 0) {
           selections.push(getCachedNode({
             kind: Kind.INLINE_FRAGMENT,
-            typeCondition: {
+            typeCondition: getCachedNode({
               kind: Kind.NAMED_TYPE,
-              name: {
+              name: getCachedNode({
                 kind: Kind.NAME,
                 value: t.name,
-              },
-            },
+              }) as NameNode,
+            }) as NamedTypeNode,
             selectionSet,
           }) as InlineFragmentNode);
         }
@@ -288,13 +292,13 @@ function resolveSelectionSet({
           if (selectionSet?.selections?.length > 0) {
             selections.push(getCachedNode({
               kind: Kind.INLINE_FRAGMENT,
-              typeCondition: {
+              typeCondition: getCachedNode({
                 kind: Kind.NAMED_TYPE,
-                name: {
+                name: getCachedNode({
                   kind: Kind.NAME,
                   value: t.name,
-                },
-              },
+                }) as NameNode,
+              }) as NamedTypeNode,
               selectionSet,
             }) as InlineFragmentNode);
           }
@@ -376,13 +380,13 @@ function resolveSelectionSet({
 const STATIC_ID_SELECTION_SET = getCachedNode({
   kind: Kind.SELECTION_SET,
   selections: [
-    {
+    getCachedNode({
       kind: Kind.FIELD,
-      name: {
+      name: getCachedNode({
         kind: Kind.NAME,
         value: 'id',
-      },
-    },
+      }) as NameNode,
+    }) as SelectionNode,
   ],
 }) as SelectionSetNode;
 
@@ -392,38 +396,38 @@ function resolveVariable(arg: GraphQLArgument, name?: string): VariableDefinitio
   function resolveVariableType(type: GraphQLInputType): TypeNode;
   function resolveVariableType(type: GraphQLInputType): TypeNode {
     if (isListType(type)) {
-      return {
+      return getCachedNode({
         kind: Kind.LIST_TYPE,
         type: resolveVariableType(type.ofType),
-      };
+      }) as TypeNode;
     }
 
     if (isNonNullType(type)) {
-      return {
+      return getCachedNode({
         kind: Kind.NON_NULL_TYPE,
         // for v16 compatibility
         type: resolveVariableType(type.ofType) as any,
-      };
+      }) as TypeNode;
     }
 
-    return {
+    return getCachedNode({
       kind: Kind.NAMED_TYPE,
-      name: {
+      name: getCachedNode({
         kind: Kind.NAME,
         value: type.name,
-      },
-    };
+      }) as NameNode,
+    }) as TypeNode;
   }
 
   return getCachedNode({
     kind: Kind.VARIABLE_DEFINITION,
-    variable: {
+    variable: getCachedNode({
       kind: Kind.VARIABLE,
-      name: {
+      name: getCachedNode({
         kind: Kind.NAME,
         value: name || arg.name,
-      },
-    },
+      }) as NameNode,
+    }) as VariableNode,
     type: resolveVariableType(arg.type),
   }) as VariableDefinitionNode;
 }
@@ -487,17 +491,17 @@ function resolveField({
 
       args[validArgsCount++] = getCachedNode({
         kind: Kind.ARGUMENT,
-        name: {
+        name: getCachedNode({
           kind: Kind.NAME,
           value: arg.name,
-        },
-        value: {
+        }) as NameNode,
+        value: getCachedNode({
           kind: Kind.VARIABLE,
-          name: {
+          name: getCachedNode({
             kind: Kind.NAME,
             value: argumentName,
-          },
-        },
+          }) as NameNode,
+        }) as ValueNode,
       }) as ArgumentNode;
     }
 
@@ -528,18 +532,18 @@ function resolveField({
 
   const baseField: FieldNode = {
     kind: Kind.FIELD,
-    name: {
+    name: getCachedNode({
       kind: Kind.NAME,
       value: field.name,
-    },
+    }) as NameNode,
     arguments: args,
   };
 
   if (fieldName !== field.name) {
-    (baseField as any).alias = {
+    (baseField as any).alias = getCachedNode({
       kind: Kind.NAME,
       value: fieldName,
-    };
+    }) as NameNode;
   }
 
   if (!isScalarType(namedType) && !isEnumType(namedType)) {
