@@ -28,7 +28,6 @@ import {
   SelectionNode,
   SelectionSetNode,
   TypeNode,
-  ValueNode,
   VariableDefinitionNode,
   VariableNode,
 } from 'graphql';
@@ -161,7 +160,7 @@ function buildOperationAndCollectVariables({
           models,
           firstCall: true,
           path: [],
-          ancestors: [],
+          ancestors: new Array(128),
           ignore,
           depthLimit,
           circularReferenceDepth,
@@ -219,39 +218,39 @@ function resolveSelectionSet({
       ancestors.push(t);
       const hasCircular = hasCircularRef(ancestors, {
         depth: circularReferenceDepth,
-      });
-      ancestors.pop();
-      if (!hasCircular) {
-        const selectionSet = resolveSelectionSet({
-          parent: type,
-          type: t,
-          models,
-          path,
-          ancestors,
-          ignore,
-          depthLimit,
-          circularReferenceDepth,
-          schema,
-          depth,
-          argNames,
-          selectedFields,
-          rootTypeNames,
-        }) as SelectionSetNode;
+      })
+      ancestors.pop()
+      if (hasCircular) continue
 
-        if (selectionSet?.selections?.length > 0) {
-          selections.push(getCachedNode({
-            kind: Kind.INLINE_FRAGMENT,
-            typeCondition: getCachedNode({
-              kind: Kind.NAMED_TYPE,
-              name: getCachedNode({
-                kind: Kind.NAME,
-                value: t.name,
-              }) as NameNode,
-            }) as NamedTypeNode,
-            selectionSet,
-          }) as InlineFragmentNode);
-        }
-      }
+      const selectionSet = resolveSelectionSet({
+        parent: type,
+        type: t,
+        models,
+        path,
+        ancestors,
+        ignore,
+        depthLimit,
+        circularReferenceDepth,
+        schema,
+        depth,
+        argNames,
+        selectedFields,
+        rootTypeNames,
+      }) as SelectionSetNode
+
+      if (selectionSet?.selections?.length == 0) continue
+
+      selections.push(getCachedNode({
+        kind: Kind.INLINE_FRAGMENT,
+        typeCondition: getCachedNode({
+          kind: Kind.NAMED_TYPE,
+          name: getCachedNode({
+            kind: Kind.NAME,
+            value: t.name,
+          }) as NameNode,
+        }) as NamedTypeNode,
+        selectionSet,
+      }) as InlineFragmentNode)
     }
 
     return selections.length > 0 ? getCachedNode({
@@ -269,40 +268,40 @@ function resolveSelectionSet({
         ancestors.push(t as GraphQLObjectType);
         const hasCircular = hasCircularRef(ancestors, {
           depth: circularReferenceDepth,
-        });
-        ancestors.pop();
+        })
+        ancestors.pop()
 
-        if (!hasCircular) {
-          const selectionSet = resolveSelectionSet({
-            parent: type,
-            type: t as GraphQLObjectType,
-            models,
-            path,
-            ancestors,
-            ignore,
-            depthLimit,
-            circularReferenceDepth,
-            schema,
-            depth,
-            argNames,
-            selectedFields,
-            rootTypeNames,
-          }) as SelectionSetNode;
+        if (hasCircular) continue
 
-          if (selectionSet?.selections?.length > 0) {
-            selections.push(getCachedNode({
-              kind: Kind.INLINE_FRAGMENT,
-              typeCondition: getCachedNode({
-                kind: Kind.NAMED_TYPE,
-                name: getCachedNode({
-                  kind: Kind.NAME,
-                  value: t.name,
-                }) as NameNode,
-              }) as NamedTypeNode,
-              selectionSet,
-            }) as InlineFragmentNode);
-          }
-        }
+        const selectionSet = resolveSelectionSet({
+          parent: type,
+          type: t as GraphQLObjectType,
+          models,
+          path,
+          ancestors,
+          ignore,
+          depthLimit,
+          circularReferenceDepth,
+          schema,
+          depth,
+          argNames,
+          selectedFields,
+          rootTypeNames,
+        }) as SelectionSetNode
+
+        if (selectionSet?.selections?.length == 0) continue
+
+        selections.push(getCachedNode({
+          kind: Kind.INLINE_FRAGMENT,
+          typeCondition: getCachedNode({
+            kind: Kind.NAMED_TYPE,
+            name: getCachedNode({
+              kind: Kind.NAME,
+              value: t.name,
+            }) as NameNode,
+          }) as NamedTypeNode,
+          selectionSet,
+        }) as InlineFragmentNode)
       }
     }
 
@@ -329,44 +328,44 @@ function resolveSelectionSet({
       const field = fields[fieldName];
       const namedType = getNamedType(field.type);
 
-      ancestors.push(namedType);
+      ancestors.push(namedType)
       const hasCircular = hasCircularRef(ancestors, {
         depth: circularReferenceDepth,
-      });
-      ancestors.pop();
-      if (!hasCircular) {
-        const selectedSubFields =
-          typeof selectedFields === 'object' ? selectedFields[fieldName] : true;
+      })
+      ancestors.pop()
 
-        if (selectedSubFields) {
-          path.push(fieldName);
-          const fieldSelection = resolveField({
-            type,
-            field,
-            models,
-            path,
-            ancestors,
-            ignore,
-            depthLimit,
-            circularReferenceDepth,
-            schema,
-            depth,
-            argNames,
-            selectedFields: selectedSubFields,
-            rootTypeNames,
-          });
-          path.pop();
+      if (hasCircular) continue
 
-          if (fieldSelection != null) {
-            if ('selectionSet' in fieldSelection) {
-              if (fieldSelection.selectionSet?.selections?.length || 0 > 0) {
-                selections.push(fieldSelection);
-              }
-            } else {
-              selections.push(fieldSelection);
-            }
-          }
+      const selectedSubFields =
+        typeof selectedFields === 'object' ? selectedFields[fieldName] : true
+
+      if (!selectedSubFields) continue
+      path.push(fieldName)
+      const fieldSelection = resolveField({
+        type,
+        field,
+        models,
+        path,
+        ancestors,
+        ignore,
+        depthLimit,
+        circularReferenceDepth,
+        schema,
+        depth,
+        argNames,
+        selectedFields: selectedSubFields,
+        rootTypeNames,
+      })
+      path.pop()
+
+      if (fieldSelection == null) continue
+
+      if ('selectionSet' in fieldSelection) {
+        if (fieldSelection.selectionSet?.selections?.length || 0 > 0) {
+          selections.push(fieldSelection)
         }
+      } else {
+        selections.push(fieldSelection)
       }
     }
 
@@ -433,7 +432,8 @@ function resolveVariable(arg: GraphQLArgument, name?: string): VariableDefinitio
 }
 
 function getArgumentName(name: string, path: string[]): string {
-  return [...path, name].join('_');
+  if(path.length === 0) return name
+  return `${path.join('_')}_${name}`
 }
 
 function resolveField({
@@ -471,18 +471,19 @@ function resolveField({
   let args: ArgumentNode[] = [];
   let removeField = false;
   if (field.args && field.args.length) {
-    args = new Array<ArgumentNode>(field.args.length);
-    let validArgsCount = 0;
+    args = new Array<ArgumentNode>(field.args.length)
+    let validArgsCount = 0
 
     for (let i = 0; i < field.args.length; i++) {
-      const arg = field.args[i];
-      const argumentName = getArgumentName(arg.name, path);
+      const arg = field.args[i]
+      const argumentName = getArgumentName(arg.name, path)
+
       if (argNames && !argNames.includes(argumentName)) {
         if (isNonNullType(arg.type)) {
-          removeField = true;
-          break;
+          removeField = true
+          break
         }
-        continue;
+        continue
       }
 
       if (!firstCall) {
@@ -501,34 +502,34 @@ function resolveField({
             kind: Kind.NAME,
             value: argumentName,
           }) as NameNode,
-        }) as ValueNode,
-      }) as ArgumentNode;
+        }) as VariableNode,
+      }) as ArgumentNode
     }
 
     if (validArgsCount < args.length) {
-      args.length = validArgsCount;
+      args.length = validArgsCount
     }
   }
 
   if (removeField) {
-    return null as any;
+    return null as any
   }
 
-  path.push(field.name);
-  const fieldPathStr = path.join('.');
-  path.pop();
+  path.push(field.name)
+  const fieldPathStr = path.join('.')
+  path.pop()
 
-  let fieldName = field.name;
-  const existingFieldType = fieldTypeMap.get(fieldPathStr);
-  const currentFieldTypeStr = field.type.toString();
+  let fieldName = field.name
+  const existingFieldType = fieldTypeMap.get(fieldPathStr)
+  const currentFieldTypeStr = field.type.toString()
 
   if (existingFieldType && existingFieldType !== currentFieldTypeStr) {
     fieldName += currentFieldTypeStr
       .replace(/!/g, 'NonNull')
       .replace(/\[/g, 'List')
-      .replace(/\]/g, '');
+      .replace(/\]/g, '')
   }
-  fieldTypeMap.set(fieldPathStr, currentFieldTypeStr);
+  fieldTypeMap.set(fieldPathStr, currentFieldTypeStr)
 
   const baseField: FieldNode = {
     kind: Kind.FIELD,
@@ -537,18 +538,18 @@ function resolveField({
       value: field.name,
     }) as NameNode,
     arguments: args,
-  };
+  }
 
   if (fieldName !== field.name) {
     (baseField as any).alias = getCachedNode({
       kind: Kind.NAME,
       value: fieldName,
-    }) as NameNode;
+    }) as NameNode
   }
 
   if (!isScalarType(namedType) && !isEnumType(namedType)) {
-    path.push(field.name);
-    ancestors.push(type);
+    path.push(field.name)
+    ancestors.push(type)
 
     const selectionSet = resolveSelectionSet({
       parent: type,
@@ -565,15 +566,15 @@ function resolveField({
       argNames,
       selectedFields,
       rootTypeNames,
-    });
+    })
 
-    path.pop();
-    ancestors.pop();
+    path.pop()
+    ancestors.pop()
+
     if (selectionSet) {
       (baseField as any).selectionSet = selectionSet;
     }
   }
-
   return getCachedNode(baseField) as SelectionNode;
 }
 

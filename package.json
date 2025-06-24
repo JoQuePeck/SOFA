@@ -1,7 +1,7 @@
 {
   "name": "sofa-api",
   "description": "Create REST APIs with GraphQL",
-  "version": "0.18.11",
+  "version": "0.18.12",
   "type": "module",
   "buildOptions": {
     "input": "./src/index.ts"
@@ -58,7 +58,9 @@
     "param-case": "^3.0.4",
     "title-case": "^3.0.3",
     "qs": "^6.11.2",
-    "tslib": "^2.5.0"
+    "tslib": "^2.5.0",
+    "xxhash-wasm": "1.1.0",
+    "yarn": "1.22.22"
   },
   "scripts": {
     "start": "cd example && tsup-node index.ts && mv dist/index.js dist/index.cjs && node dist/index.cjs",
