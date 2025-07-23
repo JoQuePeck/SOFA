@@ -222,6 +222,7 @@ function resolveSelectionSet({
       ancestors.pop()
       if (hasCircular) continue
 
+      path.push(t.name)
       const selectionSet = resolveSelectionSet({
         parent: type,
         type: t,
@@ -237,6 +238,8 @@ function resolveSelectionSet({
         selectedFields,
         rootTypeNames,
       }) as SelectionSetNode
+
+      path.pop()
 
       if (selectionSet?.selections?.length == 0) continue
 
@@ -273,6 +276,7 @@ function resolveSelectionSet({
 
         if (hasCircular) continue
 
+        path.push(t.name)
         const selectionSet = resolveSelectionSet({
           parent: type,
           type: t as GraphQLObjectType,
@@ -288,6 +292,7 @@ function resolveSelectionSet({
           selectedFields,
           rootTypeNames,
         }) as SelectionSetNode
+        path.pop()
 
         if (selectionSet?.selections?.length == 0) continue
 
@@ -515,9 +520,7 @@ function resolveField({
     return null as any
   }
 
-  path.push(field.name)
-  const fieldPathStr = path.join('.')
-  path.pop()
+  const fieldPathStr = `${path.join('.')}_${field.name}`
 
   let fieldName = field.name
   const existingFieldType = fieldTypeMap.get(fieldPathStr)
@@ -548,7 +551,8 @@ function resolveField({
   }
 
   if (!isScalarType(namedType) && !isEnumType(namedType)) {
-    path.push(field.name)
+    const useName = path[path.length - 1] !== field.name
+    if (useName) path.push(field.name)
     ancestors.push(type)
 
     const selectionSet = resolveSelectionSet({
@@ -568,7 +572,7 @@ function resolveField({
       rootTypeNames,
     })
 
-    path.pop()
+    if (useName) path.pop()
     ancestors.pop()
 
     if (selectionSet) {
